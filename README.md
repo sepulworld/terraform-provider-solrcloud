@@ -1,9 +1,9 @@
-# Terraform Provider SolrCluster
+# Terraform Provider SolrCloud
 
 Run the following command to build the provider
 
 ```shell
-go build -o terraform-provider-solrcluster
+go build -o terraform-provider-solrcloud
 ```
 
 ## Test sample configuration
