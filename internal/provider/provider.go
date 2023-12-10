@@ -174,7 +174,7 @@ func (p *SolrCloudProvider) Configure(ctx context.Context, req provider.Configur
 
 func (p *SolrCloudProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		// Define your resources here
+		NewCollectionResource,
 	}
 }
 
