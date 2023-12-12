@@ -3,9 +3,11 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -27,10 +29,10 @@ type collectionResource struct {
 // CollectionResourceModel is the model for the solrcloud_collection resource.
 type CollectionResourceModel struct {
 	Name              types.String   `tfsdk:"name"`
-	RouterName        types.String   `tfsdk:"router_name"`
 	NumShards         types.Int64    `tfsdk:"num_shards"`
 	ReplicationFactor types.Int64    `tfsdk:"replication_factor"`
 	Shards            []types.String `tfsdk:"shards"`
+	Router            types.String   `tfsdk:"router"`
 }
 
 // Configure adds the provider configured client to the resource.
@@ -61,10 +63,6 @@ func (r *collectionResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Required:    true,
 				Description: "The name of the collection to be created.",
 			},
-			"router_name": schema.StringAttribute{
-				Optional:    true,
-				Description: "The router name to be used. Possible values are implicit or compositeId.",
-			},
 			"num_shards": schema.Int64Attribute{
 				Optional:    true,
 				Description: "The number of shards to be created as part of the collection.",
@@ -77,6 +75,12 @@ func (r *collectionResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Optional:    true,
 				ElementType: types.StringType,
 				Description: "The shard names to use when creating this collection.",
+			},
+			"router": schema.StringAttribute{
+				Default:     stringdefault.StaticString("compositeId"),
+				Computed:    true,
+				Optional:    true,
+				Description: "The router to use when creating this collection.",
 			},
 		},
 	}
@@ -101,7 +105,7 @@ func (r *collectionResource) Create(ctx context.Context, req resource.CreateRequ
 		shards = append(shards, shard.String())
 	}
 
-	err := r.client.CreateCollection(plan.Name.String(), int(plan.NumShards.ValueInt64()), plan.RouterName.String(), int(plan.ReplicationFactor.ValueInt64()), shards)
+	_, err := r.client.CreateCollection(ctx, plan.Name.ValueString(), int(plan.NumShards.ValueInt64()), int(plan.ReplicationFactor.ValueInt64()), shards)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating collection",
@@ -110,12 +114,57 @@ func (r *collectionResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	// Todo set the state
+	plan.Name = types.StringValue(plan.Name.ValueString())
+	plan.NumShards = types.Int64Value(plan.NumShards.ValueInt64())
+	plan.ReplicationFactor = types.Int64Value(plan.ReplicationFactor.ValueInt64())
+	plan.Router = types.StringValue(plan.Router.ValueString())
+	for _, shard := range plan.Shards {
+		plan.Shards = append(plan.Shards, types.StringValue(shard.String()))
+	}
+
+	diags = resp.State.Set(ctx, plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 }
 
 // Read refreshes the Terraform state with the latest data.
 func (r *collectionResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state CollectionResourceModel
+	diags := req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	collection, err := r.client.GetCollectionStatus(state.Name.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error reading collection",
+			"Could not read collection, unexpected error: "+err.Error(),
+		)
+		return
+	}
+
+	state.Name = types.StringValue(state.Name.ValueString())
+	numReplicationFactor := strconv.Itoa(collection.ReplicationFactor)
+
+	// get collection router routerinfo name
+	state.Router = types.StringValue(collection.Router.Name)
+	replicationFactor, err := strconv.ParseInt(numReplicationFactor, 10, 64)
+	if err != nil {
+		return
+	}
+
+	state.NumShards = types.Int64Value(replicationFactor)
+	state.ReplicationFactor = types.Int64Value(replicationFactor)
+	diags = resp.State.Set(ctx, state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 }
 
 // Update updates the resource and sets the updated Terraform state on success.
